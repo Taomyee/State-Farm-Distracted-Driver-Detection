@@ -1,0 +1,344 @@
+% \documentclass[review]{cvpr}
+\documentclass[final]{cvpr} 
+
+\usepackage{times}
+\usepackage{epsfig}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\usepackage{float}
+\usepackage[ruled,linesnumbered]{algorithm2e}
+\usepackage{hyperref}
+
+\lstset{language=python}
+
+% Include other packages here, before hyperref.
+
+% If you comment hyperref and then uncomment it, you should delete
+% egpaper.aux before re-running latex.  (Or just hit 'q' on the first latex
+% run, let it finish, and you should be clear).
+\usepackage[pagebackref=true,breaklinks=true,colorlinks,bookmarks=false]{hyperref}
+
+
+\def\cvprPaperID{****} % *** Enter the CVPR Paper ID here
+\def\confYear{CVPR 2021}
+%\setcounter{page}{4321} % For final version only
+
+
+\begin{document}
+
+%%%%%%%%% TITLE
+\title{Distracted Driver Detector}
+
+\author{
+  Ke Chen, JiaJun Gu, Yiming Ju, and Sen Wang
+\thanks{
+This submission is the project proposal for course ECE4880J in 2022SU. This course is held by UM-SJTU Joint Institute, Shanghai Jiao Tong University. The mentor of this course is Dr. Siheng Chen.
+}}
+
+\maketitle
+
+
+%%%%%%%%% ABSTRACT
+\begin{abstract}
+    With the popularization of vehicles and high traffic accident rate, driving safety has gradually been paid attention to by people. Since almost traffic accidents are caused by drivers' distraction, it's necessary to detect these potentially dangerous actions in advance so as to reduce the probability of traffic accidents.
+    
+   The Kaggle challenge \textit{State Farm Distracted Driver Detection} aims to detect the behavior of a driver given a photo taken by the dashboard camera. The dataset is classified into 10 classes of dangerous driving behaviors. And our model is based on EfficientNet method. We compared the performance of different pre-trained models and finally chose EfficientNet-b5. Through data preprocessing, driving images are converted into metrics with clear and uniform format which can be read by pytorch. Then different learning rate and epochs are used in the training. To avoid overfitting, k-fold cross validation is used in the training. In order to achieve the highest predicting accuracy on the test dataset, we trained a classifier and take the interaction between human and objects into account. Our model can be used to recognize the behavior of the driver with a relatively high accuracy. The performance of our project ranks 47/1440 in the competition.
+\end{abstract}
+\\
+%%%%%%%%% BODY TEXT
+\section{Introduction}
+Driving safety is of great importance in our daily life. According to Karnas Law Firm, around 3,000 car accidents occurs each day all over the world. In addition to alcohol and drug use, distracted behaviors of a driver also account for a large proportion of the accidents. Statistics from the CDC motor vehicle safety division reveal that one-fifth of car accidents were caused by distracted drivers.
+
+Motivated by the desire to enhance driving safety, our group decide to participate in the Kaggle challenge \textit{State Farm Distracted Driver Detection} (for detailed information, see \url{https://www.kaggle.com/competitions/state-farm-distracted-driver-detection/data}). The competition was held by State Farm in 2016, the largest property and casualty insurance company in the United States. The aim of the challenge is to automatically detect the distracted behaviors of drivers with dashboard cameras.
+
+In this competition, we are given individual images, and we need to correctly label the images in the test dataset. Therefore, the problem setting is indeed an action recognition task on still images, and this is generally more challenging than action recognition in videos for lack of motion information. A naive way to deal with this is to train a classifier using complete images, while many literatures focus a lot on the interaction between human and objects so as to concentrate on more important information. In our setting, as we still need to take some actions without objects, such as ``talking to passenger" and ``safe driving" into consideration, we have to be careful when applying existing methods.
+
+We preprocessed the dataset, selected the appropriate pre-trained model, constructed our own machine learning model, and compared different optimizers. After training and validation, our model can be used to recognize the behavior of the drivers with a relatively high accuracy.
+%------------------------------------------------------------------------
+\section{Related Work}
+    Most of the literatures we found pay much attention on human-object interactions. Girish et al.~\cite{action_reco_still} provides a solution for recognition of actions that includes people's interaction with objects. They implement this by focusing on the region where human and objects both appear. By training a classifier on 4096-dimensional vectors which represent the components they need, and are achieved by a CNN model trained beforehand, they are able to perform action recognition with the best accuracy of 81.97\%.
+    
+    Yao et al.~\cite{attri_parts} models human actions by two elements, attributes that depict human actions, and parts that represent objects. In this study, they propose a so-called ``dual sparsity reconstruction framework" based on sparse coding and compressed sensing to represent meaningful contents of images. Experiments on the PASCAL action dataset and ``Stanford 40 Actions" dataset show that their method has a state-of-art performance.
+    
+    Delaitre et al.~\cite{person_obj} propose discriminate training model that introduces features representing interaction between human and objects, and discriminatively selects person-objective intersection pairs. Experiments on the Willow-action dataset and the PASCAL VOC 2010 action classification dataset yield the mean average precion of around 62.2\%.
+    
+    Maji et al.~\cite{5995631} work mainly focus on using poselet to solve the problems of recognizing the action of human in those images that only contain part of a person or only have few images to be trained, his work is still meaningful for us. According to the results from Maji, the pose itself alone could not directly indicate the actions, models of learning action's appearance by restricting the training examples of poselet to category is needed. His work indicate that we should also focus more on appearance.
+    
+    Gkioxari et al. ~\cite{7410641} work develop a part-based system that applying the CNN to part of the image to figure out the partial feature of the image. He define the object categories as "person+action" and get nice performance. It alongs with Maji give us inspiration that we could focus more on the object. 
+    
+    Yao et al.~\cite{5995368} detect the actions by combining the discriminative feature mining and randomization to discover image patches. Its gives that using randomization could be a useful method for avoiding overfitting.
+
+    Based on the literatures, in addition to the general idea of training a classifier, it is reasonable for us to take into account the human-object interaction in our method.
+
+%------------------------------------------------------------------------
+\section{Approach}
+
+\subsection{Preprocess}
+In the experimental stage, in order to make sure that the performance is not caused by different random number seeds, we first determine a fixed random number seed to ensure that the random numbers generated by the random function in $\mathtt{random} $, $\mathtt{numpy} $, and $\mathtt{pytorch} $ are identical each time. We created an $\mathtt{activity\_map} $ dictionary, mapping the possible behaviors of drivers to the corresponding sequence number, and adds two columns to our dataframe, which are:\\
+\begin{itemize}
+\item  $\mathtt{class\_num}$, which uses int to represent the corresponding class of each image.
+\item  $\mathtt{File\_path}$, which records the path of each image, so as to facilitate the subsequent reading of each file.
+\end{itemize}
+We have defined two classes to realize the main data preprocessing procedure.
+
+\begin{itemize}
+    \item $\mathtt{DataTransform}$. This class is used to transform and enhance pictures. In this process, we mainly used $\mathtt{albumentations}$ package. This package is designed for image preprocessing. As shown in the figure below, it has a much faster speed than other methods, which greatly improves the efficiency of our data preprocessing. We flip, resize, and normalize the images of the training set. And for validation set, flipping and resizing makes no difference on the result, so these two steps are omitted. And finally, we use the ToTensorV2 function to convert the images into an acceptable input format for the pytorch model.
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[scale=0.3]{fast.png}
+        \caption{The speed of albumentations vs. other packages}
+    \end{figure}
+    \item $\mathtt{Dataset}$. This class is used to store the preprocessing results and needs to be used with the $\mathtt{DataTransform}$ class. By calling $\mathtt{pull\_item}$ function within the class, it will automatically transform and store image information. The images before and after preprocess are shown in the following figures.
+\begin{figure}[htbp] 
+\begin{minipage}[t]{0.49\linewidth} 
+    \centering
+    \includegraphics[width=1.3in]{before.jpg} 
+\end{minipage}
+\begin{minipage}[t]{0.49\linewidth} 
+    \centering
+    \includegraphics[width=1in]{after.png}
+\end{minipage}
+  \caption{Before and after preprocess}
+\end{figure}
+\end{itemize} 
+
+Then we use $\mathtt{torch.utils.data.DataLoader()}$ to create data-loaders for both training set and validation set to combine a dataset and a sampler, and provide an iterable over the given dataset. After preprocess, we can get iterable and normalized datasets for both training and validation.
+
+\subsection{Pre-trained model selection}
+ Transfer learning is a technique that aims to adapt an existing model to be endowed with a different but related function that solves a different problem. It can be used as a starting point in some similar but different tasks and the "child" model can be trained to high accuracy with a much smaller dataset compared to the "parent" model. Since an overall re-training would essentially cost extensive computation resources, fine-tuning re-trains selected layers of the pre-trained model while freezing other layers’parameters. Thus a good pre-trained model matters.
+
+    Criteria for selecting pre-trained models:
+    \begin{enumerate}
+        \item Accuracy.
+        \item Speed of model training and predictions.
+    \end{enumerate}
+    From $\mathtt{EfficientNet}$, we compared the performance of $\mathtt{EfficientNet-b2}$, $\mathtt{EfficientNet-b3}$, $\mathtt{EfficientNet-b4}$, and $\mathtt{EfficientNet-b5}$ with the first 1000 images in the training set. The performance regarding accuracy and training time is as shown in the figure below. We can see that the accuracy of $\mathtt{EfficientNet-b5}$ is relatively high and the training time is not that large. Actually, the accuracy will be even higher if we use $\mathtt{EfficientNet-b6}$ or $\mathtt{EfficientNet-b7}$, but as trade-off, the training time increases greatly. For $\mathtt{EfficientNet-b5}$, its accuracy is already more than 99\%. Considering both the accuracy and the training time, we will choose $\mathtt{EfficientNet-b5}$ as our pre-trained model.
+    
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[scale=0.4]{model.png}
+    \caption{Comparison of different pretrained models}
+\end{figure}
+    
+\subsection{Train}
+The training process is shown in the following part, which applies cross validation. The whole dataframe is divided into several folds through the function $\mathtt{sklearn.model\_selection.StratifiedKFold}$. In each fold the data is preprocessed and then trained. Optimizer can be chosed through $\mathtt{torch.optim}$. For each train, if the validation loss is smaller than the previous best one, the current parameters will be saved through the function $\mathtt{save\_point}$ so as to avoid the waste of resources and repeated training.
+
+\begin{algorithm}\label{train}
+\caption{Model Training (k-fold)}
+    \For{each fold}{
+        preprocess the data \\
+        \For{each epoch}{
+            \For{train/validation}{
+                \For{each image}{
+                    update weights and loss 
+                }
+            }
+            \eIf{best\_val\_loss $>$ epoch\_val\_loss}{
+                save\_checkpoint()
+            }
+        }
+    }
+\end{algorithm} 
+
+\subsubsection{K-Fold cross validation}
+
+In the process of training, the problem of overfitting often occurs, that is, the model can match the training data well, but cannot predict the data outside the training set well. Thus data is often divided into training set and validation set to evaluate the training effect of the model.
+It divides the original data into K groups (k-fold), takes each subset data as a validation set, and the rest of the K-1 subset data as the training set. In this way, K models can be obtained. The results of these K models were evaluated in the validation set respectively, and the final Error MSE(Mean Squared Error) is added and averaged to obtain the cross-validation error. Cross-validation makes effective use of limited data, and the evaluation results can be as close as possible to the performance of the model on the test set.
+\\
+We compared the performance of 3-fold and 5-fold cross validation. The final score(the lower, the better) of 3-fold is 0.22057(private score, using 81\% of the test data) and 0.24386(public score, using 19\% of the test data), while the score of 5-fold is 0.18479(private score) and 0.18528(public score). We can see clearly that the more folds of cross validation we conduct, the better the performance. Theoretically, the model will be more adaptive if we use more folds. However, conducting more folds mains larger training time. Since the time limit on the HPC, we finally used 5-fold as our results.
+
+\subsubsection{Efficient Net}
+
+Compared to the common design in ConvNet finding the best layer architecture, Efficient Net doesn't change the predefined architecture in the baseline network. It just adjusts width, depth and resolution through compound scaling rather than adjusting one of them individually since scaling up any dimension of network width, depth, or resolution improves accuracy, but the accuracy gain diminishes for bigger models. From Figure 3, we can see the comparison between the scaling of width, depth, resolution respectively and compound scaling. Wider and higher resolution networks tend to be able to capture more fine-grained features and deeper network can capture richer and more complex features.
+
+The compound scaling method uses a coefficient $\phi$ to uniformly scales network width, depth and resolution.
+\begin{equation}
+\begin{aligned}
+\centering
+& depth: d=\alpha^\phi  \\
+& width: w=\beta^\phi  \\
+& resolution: r=\gamma^\phi  \\
+&      s.t. \alpha*\beta^2*\gamma^2\approx2 \\
+&           \alpha\geq1,\beta\geq1,\gamma\geq1
+\end{aligned}
+\end{equation}
+where $\alpha,\beta,\gamma$ are constant. Since the FLOPS of a convolution operation is proportional to $d,w^2,r^2$ and with compound scaling it will increase by $(\alpha*\beta^2*\gamma^2)^\phi$, which is about $2^\phi$. 
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[scale=0.7]{efficientnet_scale.png}
+    \caption{Model Scaling of Efficient Net}
+    \label{fig:my_label}
+\end{figure}
+
+\subsubsection{Pipeline}
+   Our model is baesd on mobile converted bottleneck Revolution (MBConv module) 
+    and Squeeze-and-Excitation Network (SENet module). 
+    Firstly, we conducted 1$\times$1 point by point convolution through MBConv, 
+    and then transform the dimension of the output channel according to 
+    the expansion ratio and perform the k$\times$k dimension depth-wise 
+    revolution. After that, the SENet module was used for Squeeze and 
+    Excitation. In the squeeze process, the feature image will be 
+    compressed through the global average pooling in the direction of 
+    the output channel to obtain the global features, so that we can learn the 
+    relationship between each channel according to the global feature 
+    dimension (D) and the activation ratio (R). Then through sigmoid 
+    activation function, the weights of different channels can be 
+    obtained, and the final feature image can be calculated. This 
+    operation can make the model focus more on the informative channels 
+    and pay less attention on those unimportant channels. After that, 
+    the channel can be restored to its original dimension through 1$\times$1 
+    point by point convolution. Finally, using the methods of drop 
+    connect and skip connection, the training depth can be randomized, 
+    so as to reduce the training time.\footnote{This method is inspired by the paper "Deep Networks with Stochastic Depth", which makes the model have random depth, shortens the training time, and improves the performance of the model}
+    \begin{figure}[h] 
+      \centering
+      \includegraphics[width=0.4\textwidth]{1} 
+      \caption{Sketch Map for Squeeze and Excitation} 
+    \end{figure}
+
+\subsection{Test}
+The test process is shown in Algorithm~\ref{test}. It applies the model trained in the previous process to predict the class which the test image belongs to. Since we have several models in the training part, each image will be inferred through all these models. Finally the image can obtain the class label through calculating the mean value of these models.
+
+\begin{algorithm}\label{test}
+    \caption{Test}
+    \For{each fold}{
+        \For{each image in the test fold}{
+        obtain the predicted probability
+        }
+    }
+    
+    calculate the mean result \\
+    obtain the predicted label \\
+\end{algorithm}
+
+
+\section{Experiments}
+\subsection{Data}
+        The datasets that the organizer provides to us are enough for our training. It is provided \href{https://www.kaggle.com/code/seele1917/state-farm-distracted-driver-detection-answer/data}{here}. The 4.31GB data contains around 20,000 images for training, and around 80,000 images for testing. A preliminary analysis on the training data shows that the images are from 26 unique drivers, and each driver has around 850 images on average. The training data has already been correctly labeled and restored in separate folders. The labels are:
+\begin{itemize}
+    \item c0: safe driving
+    \item c1: texting - right
+    \item c2: talking on the phone - right
+    \item c3: texting - left
+    \item c4: talking on the phone - left
+    \item c5: operating the radio
+    \item c6: drinking
+    \item c7: reaching behind
+    \item c8: hair and makeup
+    \item c9: talking to passenger
+\end{itemize}
+There are about 2,000 images in each of the categories above. The images are well-organized, so we only need to load them and convert them to arrays or tensors for future use.
+          
+    \subsection{Experimental details}
+ 
+
+    \subsubsection{Model configurations}
+    To apply the pretrained EfficientNet model, python package \href{https://github.com/lukemelas/EfficientNet-PyTorch#about-efficientnet-pytorch}{$efficientnet\_pytorch$} is installed. According to Table 1, with version updates, the size of parameters and the accuracy both increase. Considering our limitations of size, accuracy, and speed, we choose "efficientnet-b5" and set the parameter $num\_classes$ to be 10 classes.
+    \begin{table}[htbp]
+        \centering
+        \begin{tabular}{c|c|c}
+            Name            & Params & Top-1 Acc.\\
+            \hline
+            efficientnet-b0 &  5.3M  & 76.3\\
+            efficientnet-b1 &  7.8M  & 78.8  \\
+            efficientnet-b2 &  9.2M  & 79.8  \\
+            efficientnet-b3 &  12M  & 81.1  \\
+            efficientnet-b4 &  19M  & 82.6  \\
+            efficientnet-b5 &  30M  & 83.3  \\
+            efficientnet-b6 &  43M  & 84.0  \\
+            efficientnet-b7 &  66M  & 84.4  \\
+        \end{tabular}
+        \caption{Details about the models}
+        \label{tab:my_label}
+    \end{table}
+
+    \subsubsection{Training time}
+    For 3-fold cross validation method, the average training time for each epoch is 321.4630 seconds. For 5-fold cross validation method, the training time is 336.8946 seconds per epoch. For both of them, each fold have 10 epoch, therefore, the training time for each fold is almost the same, which is about 50 minutes. However, the total training time should be: $$time\ for\ each\ fold \times number\ of\ folds$$Therefore, the time for 3-fold is about 3 hours and for 5-fold is about 4 hours.
+
+    
+    \subsubsection{hyperparameters}
+    \begin{lstlisting}[language=python]
+    class args:
+    model_name = EfficientNet-b2/EfficientNet-b3...
+    input_size = 256
+    num_classes = 10
+    batch_size = 32/64
+    epochs = 10/50/100
+    folds = 5
+    lr = 10e-3/10e-4/decay
+    train = True/False
+    \end{lstlisting}
+    
+    \begin{enumerate}
+    \item model\_name: the pretrained model we used
+    \item input\_size: uniform image size in data pre-process
+    \item num\_classes: the number of behavior classes
+    \item batch\_size:  the number of training examples utilized in one iteration \\    
+    Advantages:
+    \begin{enumerate}
+        \item require less memory
+        \item train faster
+    \end{enumerate}
+    Disadvantage:
+    \begin{enumerate}
+        \item less accurate
+    \end{enumerate}
+    \item epochs: the number times that the learning algorithm will work through the entire training dataset \\
+    Too small: not yet fitting \\
+    Too large:overfitting
+    \item folds: the number of folds that the dataset is divided so as to implement k-folds
+    \item lr: learning rate \\
+    Too small: train slowly \\
+    Too large: lead to divergence \\
+    learning rate decay: start with a large learning rate then decays it multiple times. Because at the beginning with a large learning rate, we can get a relatively good weight. Then through gradually adjusting the learning rate, the more optimal result will be obtained.
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[scale=0.2]{learning rate.png}
+        \caption{Low and high learning rate}
+    \end{figure}
+    \begin{figure}[htbp]
+        \centering
+        \includegraphics[scale=0.3]{stepdecay.png}
+        \caption{Learning rate decay}
+    \end{figure}
+    \item train: whether the model is used to train or test
+    \end{enumerate}
+
+    
+    \subsection{Evaluation method}
+    \begin{enumerate}
+    \item Accuracy:
+        \[Accuracy=\frac{\text{Number of correct predictions}}{\text{Number of images in the test set}}\]
+        Expected accuracy is greater than 90\%.
+    \item Log Loss:
+        \[logloss=-\frac{1}{N}\sum^N_{i=1}\sum^M_{j=1}y_{ij}log(p_{ij})\]
+         where N is the number of images in the test set, M is the number of image class labels, $y_{ij}$ is 1 if prediction is correct and 0 otherwise, $p_{ij}$ is the probability the observation belongs to the correct class. It's the evaluation metrics used in official leaderboard and expected accuracy is lower than 0.15.
+    \item Model size:
+        Since the model size is not our primary concern, the principle is to reduce the model size
+        without much impact on the first two evaluation metrics.
+    \end{enumerate}
+    \subsection{Results}
+    As we mentioned before, the host of the competition split the test set into private set and public set. The private set contains 81\% of the test images, and the public set contains the rest 19\%. Our score is shown in the figure below, where the 'Score: 0.18479' means the private score. Our model ranks 47 out of 1440 submissions, which ranks in top 3.3\% among all the competitors.
+        \begin{figure}[htb]
+            \centering
+            \includegraphics[width=0.8\linewidth]{result.png}
+            \caption{Prediction Result (Logarithmic Loss)}
+            \label{fig:my_label}
+        \end{figure}
+
+    \subsection{Ablation studies}
+    The most important hyperparameters are the choice of pre-trained model and the number of the folds. The good choice of pre-trained model can reduce the training time, increase the predicting accuracy, and save the space, so as to save the computational resources. For the number of folds, it is a trade-off between training time and the adaptation of the model. If the number of fold is larger, it can better avoid overfitting, however, it will increase the training time.
+
+\section{Conclusion}
+
+This paper showed how we improve the performance of efficientnet for this problem. From the previous Table \ref{tab:my_label}, we could see that the accuracy increases along with the size of the parameters. The larger size of parameters would lead to larger use of memory and finally results in slower training speed. Due to our limitations of time and computation power, a trade-off between time and accuracy is unavoidable. Then we conduct experiment on small dataset and determine to use efficientnet-b5 as our model. The models that have larger parameter size than b5 increase few accuracy while it increase the time spent a lot. 
+
+{\small
+\bibliographystyle{ieee_fullname}
+\bibliography{egbib}
+}
+
+\end{document}
